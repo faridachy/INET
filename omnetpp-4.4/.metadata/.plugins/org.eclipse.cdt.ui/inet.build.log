@@ -1,0 +1,10 @@
+14:43:16 **** Incremental Build of configuration gcc-debug for project inet ****
+make MODE=debug CONFIGNAME=gcc-debug all 
+cd src && make
+make[1]: Entering directory `/home/ripul/inet_test/inet-integration/src'
+networklayer/ipv4/IPv4RoutingTable.cc
+Creating shared library: ../out/gcc-debug/src/libinet.so
+make[1]: Leaving directory `/home/ripul/inet_test/inet-integration/src'
+
+14:43:23 Build Finished (took 6s.624ms)
+

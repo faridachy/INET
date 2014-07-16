@@ -1,0 +1,101 @@
+#include "IPv4ControlInfo.h"
+#include "IPv4.h"
+#include "UDPNatHook.h"
+#include "IPv4RoutingTableAccess.h"
+#include "IPv4InterfaceData.h"
+//#include "UDPAssociation.h"
+
+Define_Module(UDPNatHook);
+
+void UDPNatHook::initialize()
+{
+    IPv4RoutingTableAccess routingTableAccess;
+    InterfaceTableAccess interfaceTableAccess;
+
+    ipLayer = check_and_cast<IPv4*>(getParentModule()->getSubmodule("networkLayer")->getSubmodule("ip"));
+    rt = routingTableAccess.get();
+    ift = interfaceTableAccess.get();
+    natTable = new UDPNatTable();
+    nattedPackets = 0;
+
+    ipLayer->registerHook(0, this);
+}
+
+
+INetfilter::IHook::Result UDPNatHook::datagramForwardHook(INetworkDatagram* datagram, const InterfaceEntry* inIE, const InterfaceEntry*& outIE, Address& nextHopAddr)
+{
+    std::cerr<<"AT SCTPNatHook::datagramForwardHook..."<<"\n";
+
+	return INetfilter::IHook::ACCEPT;
+}
+
+INetfilter::IHook::Result UDPNatHook::datagramPreRoutingHook(INetworkDatagram* datagram, const InterfaceEntry* inIE, const InterfaceEntry*& outIE, Address& nextHopAddr)
+{
+    std::cerr<<"AT SCTPNatHook::datagramPreRoutingHook..."<<"\n";
+
+    return INetfilter::IHook::ACCEPT;
+}
+
+INetfilter::IHook::Result UDPNatHook::datagramPostRoutingHook(INetworkDatagram* datagram, const InterfaceEntry* inIE, const InterfaceEntry*& outIE, Address& nextHopAddr)
+{
+    std::cerr<<"AT SCTPNatHook::datagramPostRoutingHook..."<<"\n";
+
+    return INetfilter::IHook::ACCEPT;
+}
+
+INetfilter::IHook::Result UDPNatHook::datagramLocalInHook(INetworkDatagram* datagram, const InterfaceEntry* inIE)
+{
+    std::cerr<<"AT SCTPNatHook::datagramLocalInHook..."<<"\n";
+
+    return INetfilter::IHook::ACCEPT;
+}
+
+INetfilter::IHook::Result UDPNatHook::datagramLocalOutHook(INetworkDatagram* datagram, const InterfaceEntry*& outIE, Address& nextHopAddr)
+{
+    std::cerr<<"AT SCTPNatHook::datagramLocalOutHook..."<<"\n";
+
+    return INetfilter::IHook::ACCEPT;
+}
+
+
+void UDPNatHook::sendBackError(IPv4Datagram* dgram)
+{
+	UDPMessage *UDpmsg = new UDPMessage();
+	UDpmsg->setByteLength(UDP_COMMON_HEADER);
+	UDPErrorChunk* errorChunk = new UDPErrorChunk("NatError");
+	errorChunk->setChunkType(ERRORTYPE);
+	errorChunk->setByteLength(4);
+	UDPSimpleErrorCauseParameter* cause = new UDPSimpleErrorCauseParameter("Cause");
+	cause->setParameterType(MISSING_NAT_ENTRY);
+	cause->setByteLength(4);
+	cause->encapsulate(dgram->dup());
+	errorChunk->setMBit(true);
+	errorChunk->setTBit(true);
+	errorChunk->addParameters(cause);
+	UDpmsg->addChunk(errorChunk);
+
+	UDPMessage *oldmsg = check_and_cast<UDPMessage*>(dgram->decapsulate());
+	UDpmsg->setSrcPort(oldmsg->getDestPort());
+	UDpmsg->setDestPort(oldmsg->getSrcPort());
+	UDpmsg->setTag(oldmsg->getTag());
+	UDpmsg->setChecksumOk(true);
+	dgram->removeControlInfo();
+	dgram->setName(UDpmsg->getName());
+	dgram->setByteLength(IP_HEADER_BYTES);
+	dgram->encapsulate(UDpmsg);
+	IPv4Address tmpaddr = dgram->getDestAddress();
+	dgram->setDestAddress(dgram->getSrcAddress());
+	if (!tmpaddr.isUnspecified())
+	    dgram->setSrcAddress(tmpaddr);
+	dgram->setTransportProtocol(IP_PROT_UDP);
+	delete oldmsg;
+}
+
+void UDPNatHook::finish()
+{
+    if (ipLayer)
+        ipLayer->unregisterHook(0, this);
+    ipLayer = NULL;
+    delete natTable;
+    std::cout<<getFullPath()<<": Natted packets: "<<nattedPackets<<"\n";
+}

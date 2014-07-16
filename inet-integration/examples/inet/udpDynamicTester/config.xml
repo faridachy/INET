@@ -1,0 +1,8 @@
+<config>
+    <interface hosts="*" address="100.1.x.x"/>                
+    <interface hosts="area*.server*" address="100.1.x.x"/>                
+    <interface hosts="area*.*router*" towards="area*.*" address="100.1.x.x"/>
+    <interface hosts="area*.*router*" towards="area*.*.*" address="100.1.x.x"/>
+    <interface hosts="area*.lan*.natRouter" names="ppp2" address="100.1.x.x"/>
+    <interface hosts="area*.*.*" address="10.1.x.x"/>                    	        
+</config>

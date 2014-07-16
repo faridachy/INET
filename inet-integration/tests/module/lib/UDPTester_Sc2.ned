@@ -1,0 +1,79 @@
+import inet.nodes.inet.StandardHost;
+import inet.nodes.inet.Router;
+import ned.DatarateChannel;
+import inet.transport.udp.UDPNatRouter;
+
+
+network UDPTester_Sc2
+{
+    parameters:
+        volatile double testTimeout;
+        bool testing;
+        **.networkLayer.configurator.networkConfiguratorModule = "";
+        @display("bgb=607,318");
+    submodules:
+        Peer_1: StandardHost {
+            parameters:
+                IPForward = false;
+                routingTable.routingFile = "../../lib/UDPtest_sc2_peer1.mrt";
+                @display("p=50,261;i=device/laptop");
+            gates:
+                pppg[1];
+        }
+
+        Peer_2: StandardHost {
+            parameters:
+                IPForward = false;
+                routingTable.routingFile = "../../lib/UDPtest_sc2_peer2.mrt";
+                @display("p=527,261;i=device/laptop");
+            gates:
+                pppg[1];
+        }
+
+        Server1: StandardHost {
+            parameters:
+                IPForward = false;
+                routingTable.routingFile = "../../lib/UDPtest_sc2_server1.mrt";
+                @display("p=290,30;i=device/server");
+            gates:
+                pppg[1];
+        }
+
+        Router1: Router {
+            parameters:
+                routingTable.routingFile = "../../lib/UDPtest_sc2_router1.mrt";
+                networkLayer.configurator.networkConfiguratorModule = "";
+                @display("p=290,131;i=abstract/router");
+            gates:
+                pppg[3];
+        }
+
+        NAT_1: UDPNatRouter {
+            parameters:
+                routingTable.routingFile = "../../lib/UDPtest_sc2_nat_router1.mrt";
+                @display("p=143,172;i=block/join");
+            gates:
+                pppg[2];
+        }
+
+        NAT_2: UDPNatRouter {
+            parameters:
+                routingTable.routingFile = "../../lib/UDPtest_sc2_nat_router2.mrt";
+                @display("p=443,172;i=block/join");
+            gates:
+                pppg[2];
+        }
+
+
+    connections:
+        Peer_1.pppg[0] <--> testline1 <--> NAT_1.pppg[0];
+        NAT_1.pppg[1] <--> testline1 <--> Router1.pppg[0];
+        NAT_2.pppg[0] <--> testline1 <--> Peer_2.pppg[0];
+        NAT_2.pppg[1] <--> testline1 <--> Router1.pppg[1];
+        Router1.pppg[2] <--> testline1 <--> Server1.pppg[0];                
+
+}
+channel testline1 extends DatarateChannel
+{
+    datarate = 100 Mbps;
+}

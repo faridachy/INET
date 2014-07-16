@@ -1,0 +1,50 @@
+[General]
+network=UDP_Peer2Server
+cmdenv-event-banners=false
+cmdenv-express-mode = false
+cmdenv-module-messages=false
+ned-path = .;../../../../src;../../lib
+**.testing = true
+**.testTimeout = 0
+
+# udp app (off)
+#**.numUdpApps = 1
+#**.udpType = "UDP"
+
+#**.numTcpApps = 0
+#**.tcpType = ""
+
+# udp apps
+
+#**.srv.numUdpApps = 1
+#**.srv.udpApp[*].typename = "UDPSink"
+#**.srv.udpApp[0].localPort = 1000
+
+
+# udp apps
+**.Peer_1.numUdppApps=1
+**.Server.numUdpApps=1
+**.Peer_*.udpApp[*].typename="UDPBasicApp"
+**.Server*.udpApp[*].typename="UDPBasicApp"
+
+**.Peer_1.udpApp[0].destAddresses = "100.2.2.254"
+**.Peer_1.udpApp[0].destPort = 1000
+**.Peer_1.udpApp[0].messageLength = 64B
+**.Peer_1.udpApp[0].typeOfService = 53  # some abritrary value
+**.Peer_1.udpApp[0].startTime = 10s
+**.Peer_1.udpApp[0].stopTime = 11s
+**.Peer_1.udpApp[0].sendInterval = 10s
+
+
+#**.Server.udpApp[0].destAddresses = "" 
+#**.Server.udpApp[0].destPort = 1000
+**.Server.udpApp[0].messageLength = 64B
+**.Server.udpApp[0].typeOfService = 53  # some abritrary value
+**.Server.udpApp[0].startTime = 10s
+**.Server.udpApp[0].stopTime = 11s
+**.Server.udpApp[0].sendInterval = 10s
+
+
+
+
+

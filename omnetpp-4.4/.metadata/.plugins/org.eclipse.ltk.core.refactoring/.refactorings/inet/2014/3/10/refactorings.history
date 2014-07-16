@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Rename resource &apos;inet/tests/module/lib/P2S_peer1.mrt&apos; to &apos;P2S_Peer_1.mrt&apos;" description="Rename resource &apos;P2S_peer1.mrt&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="tests/module/lib/P2S_peer1.mrt" name="P2S_Peer_1.mrt" stamp="1394401478295" updateReferences="true"/>
+</session>

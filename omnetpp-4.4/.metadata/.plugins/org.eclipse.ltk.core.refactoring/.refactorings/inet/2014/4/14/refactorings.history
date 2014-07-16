@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Rename resource &apos;inet/tests/module/lib/router.mrt&apos; to &apos;UDPtest_sc2_router1.mrt&apos;" description="Rename resource &apos;router.mrt&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="tests/module/lib/router.mrt" name="UDPtest_sc2_router1.mrt" stamp="1396397008220" updateReferences="true"/>
+</session>

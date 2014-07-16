@@ -1,0 +1,7 @@
+examples
+src
+tests/module/lib
+-inet.applications.voipstream
+-inet.examples.voipstream
+-inet.transport.tcp_lwip
+-inet.transport.tcp_nsc

@@ -1,0 +1,109 @@
+import inet.nodes.inet.StandardHost;
+import inet.nodes.inet.Router;
+import ned.DatarateChannel;
+import inet.transport.udp.UDPNatRouter;
+
+channel Dynamic extends DatarateChannel
+{
+    datarate = 100 Mbps;
+}
+
+//
+// Several hosts on a NAT LAN consiting of a NAT Router...
+//
+module LAN
+{
+    parameters:
+        int h; // number of hosts on the router
+        @display("i=cloud_s");
+    gates:
+        inout pppg;
+
+    submodules:
+        router: UDPNatRouter {
+            @display("i=block/join");
+            gates:
+                pppg[h + 1];
+        }
+
+        Peer_[h]: StandardHost {
+            @display("is=s;p=40,39");
+            gates:
+                pppg[1];
+        }
+    connections:
+        for i=0..h-1 {
+            router.pppg[i] <--> Dynamic <--> Peer_[i].pppg[0];
+        }
+        router.pppg[h] <--> pppg;
+}
+
+network UDPDynamicTester
+{
+    parameters:
+        volatile double testTimeout;
+        int numOfHosts;
+        int numOfServers;
+        int numOfRouters;
+        bool testing;
+        **.networkLayer.configurator.networkConfiguratorModule = "";
+        @display("bgb=607,318");
+    submodules:
+        Peer_1: StandardHost {
+            parameters:
+                IPForward = false;
+                routingTable.routingFile = "../../lib/UDPtest_sc2_peer1.mrt";
+                @display("p=50,261;i=device/laptop");
+            gates:
+                pppg[1];
+        }
+
+        Peer_2: StandardHost {
+            parameters:
+                IPForward = false;
+                routingTable.routingFile = "../../lib/UDPtest_sc2_peer2.mrt";
+                @display("p=527,261;i=device/laptop");
+            gates:
+                pppg[1];
+        }
+
+        Server_[numOfServers]: StandardHost {
+            parameters:
+                @display("p=290,30;i=device/server");
+            gates:
+                pppg[1];
+        }
+
+        Router1: Router {
+            parameters:
+                routingTable.routingFile = "../../lib/UDPtest_sc2_router1.mrt";                
+                @display("p=290,131;i=abstract/router");
+            gates:
+                pppg[3];
+        }
+
+        NAT_1: UDPNatRouter {
+            parameters:
+                routingTable.routingFile = "../../lib/UDPtest_sc2_nat_router1.mrt";
+                @display("p=143,172;i=block/join");
+            gates:
+                pppg[2];
+        }
+
+        NAT_2: UDPNatRouter {
+            parameters:
+                routingTable.routingFile = "../../lib/UDPtest_sc2_nat_router2.mrt";
+                @display("p=443,172;i=block/join");
+            gates:
+                pppg[2];
+        }
+
+
+    connections:
+        Peer_1.pppg[0] <--> testline1 <--> NAT_1.pppg[0];
+        NAT_1.pppg[1] <--> testline1 <--> Router1.pppg[0];
+        NAT_2.pppg[0] <--> testline1 <--> Peer_2.pppg[0];
+        NAT_2.pppg[1] <--> testline1 <--> Router1.pppg[1];
+        Router1.pppg[2] <--> testline1 <--> Server1.pppg[0];
+
+}

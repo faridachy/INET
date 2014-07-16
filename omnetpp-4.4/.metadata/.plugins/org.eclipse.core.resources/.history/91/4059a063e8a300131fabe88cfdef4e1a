@@ -1,0 +1,318 @@
+#include "IPv4ControlInfo.h"
+#include "IPv4.h"
+#include "UDPNatHook.h"
+#include "IPv4RoutingTableAccess.h"
+#include "IPv4InterfaceData.h"
+//#include "UDPAssociation.h"
+
+Define_Module(UDPNatHook);
+
+void UDPNatHook::initialize()
+{
+    IPv4RoutingTableAccess routingTableAccess;
+    InterfaceTableAccess interfaceTableAccess;
+
+    ipLayer = check_and_cast<IPv4*>(getParentModule()->getSubmodule("networkLayer")->getSubmodule("ip"));
+    rt = routingTableAccess.get();
+    ift = interfaceTableAccess.get();
+    natTable = new UDPNatTable();
+    nattedPackets = 0;
+
+    ipLayer->registerHook(0, this);
+}
+
+
+INetfilter::IHook::Result UDPNatHook::datagramForwardHook(INetworkDatagram* datagram, const InterfaceEntry* inIE, const InterfaceEntry*& outIE, Address& nextHopAddr)
+{
+    UDPNatEntry* entry;
+    UDPChunk* chunk;
+    IPv4Datagram *dgram;
+
+    dgram = dynamic_cast<IPv4Datagram *>(datagram);
+    if (UDPAssociation::getAddressLevel(dgram->getSrcAddress())!=3) {
+        return INetfilter::IHook::ACCEPT;
+    }
+	natTable->printNatTable();
+	UDPMessage* UDpMsg = check_and_cast<UDPMessage*>(dgram->getEncapsulatedPacket());
+	unsigned int numberOfChunks=UDpMsg->getChunksArraySize();
+	if (numberOfChunks==1)
+		chunk = (UDPChunk*)(UDpMsg->peekFirstChunk());
+	else
+		chunk = (UDPChunk*)(UDpMsg->peekLastChunk());
+	UDpEV3<<"findEntry for "<<dgram->getSrcAddress()<<":"<<UDpMsg->getSrcPort()<<" to "<<dgram->getDestAddress()<<":"<<UDpMsg->getDestPort()<<" vTag="<<UDpMsg->getTag()<<" natAddr="<<outIE->ipv4Data()->getIPAddress()<<"\n";
+	if (chunk->getChunkType() == INIT || chunk->getChunkType() == INIT_ACK || chunk->getChunkType() == ASCONF)
+	{
+		entry = new UDPNatEntry();
+		entry->setLocalAddress(dgram->getSrcAddress());
+		entry->setLocalPort(UDpMsg->getSrcPort());
+		entry->setGlobalAddress(dgram->getDestAddress());
+		entry->setGlobalPort(UDpMsg->getDestPort());
+		entry->setNattedAddress(outIE->ipv4Data()->getIPAddress());
+		entry->setNattedPort(UDpMsg->getSrcPort());
+		entry->setGlobalVTag(UDpMsg->getTag());
+		if (chunk->getChunkType() == INIT)
+		{
+			UDPInitChunk* initChunk=check_and_cast<UDPInitChunk*>(chunk);
+			entry->setLocalVTag(initChunk->getInitTag());
+		}
+		else if (chunk->getChunkType() == INIT_ACK)
+		{
+			UDPInitAckChunk* initAckChunk=check_and_cast<UDPInitAckChunk*>(chunk);
+			entry->setLocalVTag(initAckChunk->getInitTag());
+		}
+		else if (chunk->getChunkType() == ASCONF)
+		{
+			UDPAsconfChunk* asconfChunk=check_and_cast<UDPAsconfChunk*>(chunk);
+			entry->setLocalVTag(asconfChunk->getPeerVTag());
+		}
+		dgram->setSrcAddress(outIE->ipv4Data()->getIPAddress());
+		UDpMsg->setSrcPort(entry->getNattedPort());
+		natTable->natEntries.push_back(entry);
+	}
+	else
+	{
+		UDpEV3<<"other chunkType: "<<(chunk->getChunkType()==COOKIE_ECHO?"Cookie_Echo":"other")<<", VTag="<<UDpMsg->getTag()<<"\n";
+		entry = natTable->findNatEntry(dgram->getSrcAddress(),UDpMsg->getSrcPort(),dgram->getDestAddress(),UDpMsg->getDestPort(), UDpMsg->getTag());
+		if (entry==NULL)
+		{
+			UDpEV3<<"no entry found\n";
+			entry = natTable->findNatEntry(dgram->getSrcAddress(),UDpMsg->getSrcPort(),dgram->getDestAddress(),UDpMsg->getDestPort(), 0);
+			if (entry==NULL)
+			{
+				UDpEV3<<"send back error message dgram=" << dgram <<"\n";
+				sendBackError(dgram);
+				nextHopAddr = dgram->getDestAddress();
+				const InterfaceEntry* tmpIE = inIE;
+				inIE = outIE;
+				outIE = tmpIE; 
+				return INetfilter::IHook::ACCEPT;
+			}
+			else
+			{
+				UDpEV3<<"VTag doesn't match: old VTag="<<entry->getLocalVTag()<<", new VTag="<<UDpMsg->getTag()<<"\n";
+				entry->setLocalVTag(UDpMsg->getTag());
+				dgram->setSrcAddress(outIE->ipv4Data()->getIPAddress());
+				UDpMsg->setSrcPort(entry->getNattedPort());
+				UDpEV3<<"srcAddress set to "<<dgram->getSrcAddress()<<", srcPort set to "<<UDpMsg->getSrcPort()<<"\n";
+			}
+		}
+		else
+		{
+			dgram->setSrcAddress(outIE->ipv4Data()->getIPAddress());
+			UDpMsg->setSrcPort(entry->getNattedPort());
+			UDpEV3<<"srcAddress set to "<<dgram->getSrcAddress()<<", srcPort set to "<<UDpMsg->getSrcPort()<<"\n";
+		}
+
+	}
+	nattedPackets++;
+	return INetfilter::IHook::ACCEPT;
+}
+
+INetfilter::IHook::Result UDPNatHook::datagramPreRoutingHook(INetworkDatagram* datagram, const InterfaceEntry* inIE, const InterfaceEntry*& outIE, Address& nextHopAddr)
+{
+    UDPNatEntry* entry;
+    UDPChunk* chunk;
+    IPv4Datagram *dgram;
+
+    dgram = dynamic_cast<IPv4Datagram *>(datagram);
+    if (UDPAssociation::getAddressLevel(dgram->getSrcAddress())==3) {
+        return INetfilter::IHook::ACCEPT;
+    }
+	natTable->printNatTable();
+	bool local = ((rt->isLocalAddress(dgram->getDestAddress()) & UDPAssociation::getAddressLevel(dgram->getSrcAddress()))==3);
+	UDPMessage* UDpMsg = check_and_cast<UDPMessage*>(dgram->getEncapsulatedPacket());
+	unsigned int numberOfChunks=UDpMsg->getChunksArraySize();
+	if (numberOfChunks==1)
+		chunk = (UDPChunk*)(UDpMsg->peekFirstChunk());
+	else
+		chunk = (UDPChunk*)(UDpMsg->peekLastChunk());
+	if (!local)
+	{
+		entry = natTable->getEntry(dgram->getSrcAddress(),UDpMsg->getSrcPort(),dgram->getDestAddress(),UDpMsg->getDestPort(), UDpMsg->getTag());
+		UDpEV3<<"getEntry for "<<dgram->getSrcAddress()<<":"<<UDpMsg->getSrcPort()<<" to "<<dgram->getDestAddress()<<":"<<UDpMsg->getDestPort()<<" peerVTag="<<UDpMsg->getTag()<<"\n";
+		uint32 numberOfChunks = UDpMsg->getChunksArraySize();
+		if (entry==NULL)
+		{
+			UDpEV3<<"no entry found\n";
+			if (numberOfChunks==1)
+		        chunk = (UDPChunk*)(UDpMsg->peekFirstChunk());
+	        else
+		        chunk = (UDPChunk*)(UDpMsg->peekLastChunk());
+			if (chunk->getChunkType()==INIT || chunk->getChunkType()==ASCONF)
+			{
+				UDpEV3<<"could be an Init collision\n";
+				entry=natTable->getSpecialEntry(dgram->getSrcAddress(),UDpMsg->getSrcPort(),dgram->getDestAddress(),UDpMsg->getDestPort());
+				if (entry!=NULL)
+				{
+					if (chunk->getChunkType() == INIT)
+		            {
+					    UDPInitChunk* initChunk=check_and_cast<UDPInitChunk*>(chunk);
+					    entry->setLocalVTag(initChunk->getInitTag());
+					    UDpEV3<<"InitTag="<<initChunk->getInitTag()<<"\n";
+					}
+					else if (chunk->getChunkType() == ASCONF)
+		            {
+						UDPAsconfChunk* asconfChunk=check_and_cast<UDPAsconfChunk*>(chunk);
+						entry->setLocalVTag(asconfChunk->getPeerVTag());
+					}
+					dgram->setDestAddress(entry->getLocalAddress().toIPv4());
+					UDpMsg->setDestPort(entry->getLocalPort());
+					UDpEV3<<"destAddress set to "<<dgram->getDestAddress()<<", destPort set to "<<UDpMsg->getDestPort()<<"\n";
+				}
+				else
+				{
+					return INetfilter::IHook::DROP;
+				}
+			}
+			else
+			{
+				UDPChunk* schunk;
+				if (numberOfChunks>0)
+				{
+					UDpEV3<<"number of chunks="<<numberOfChunks<<"\n";
+					for (uint32 i=0; i<numberOfChunks; i++)
+					{
+						schunk = (UDPChunk*)(UDpMsg->removeChunk());
+						if (schunk->getChunkType()==DATA)
+							delete (UDPSimpleMessage*)schunk->decapsulate();
+						UDpEV3<<"delete chunk "<<schunk->getName()<<"\n";
+						delete schunk;
+					}
+				}
+				return INetfilter::IHook::DROP;
+			}
+		}
+		else
+		{
+			dgram->setDestAddress(entry->getLocalAddress().toIPv4());
+			UDpMsg->setDestPort(entry->getLocalPort());
+			if (entry->getGlobalVTag()==0 && chunk->getChunkType()==INIT_ACK)
+			{
+				UDPInitAckChunk* initAckChunk=check_and_cast<UDPInitAckChunk*>(chunk);
+				entry->setGlobalVTag(initAckChunk->getInitTag());
+			}
+			UDpEV3<<"destAddress set to "<<dgram->getDestAddress()<<", destPort set to "<<UDpMsg->getDestPort()<<"\n";
+		}
+	}
+	else
+	{
+		if (chunk->getChunkType()==INIT)
+		{
+			UDpEV3<<"getLocALEntry for "<<dgram->getSrcAddress()<<":"<<UDpMsg->getSrcPort()<<" to "<<dgram->getDestAddress()<<":"<<UDpMsg->getDestPort()<<" peerVTag="<<UDpMsg->getTag()<<"\n";
+			entry = natTable->getLocalInitEntry(dgram->getDestAddress(), UDpMsg->getSrcPort(), UDpMsg->getDestPort());
+			if (entry == NULL)
+			{
+				entry = new UDPNatEntry();
+				entry->setLocalAddress(dgram->getSrcAddress());
+				entry->setLocalPort(UDpMsg->getSrcPort());
+				entry->setGlobalAddress(dgram->getDestAddress());
+				entry->setGlobalPort(UDpMsg->getDestPort());
+				entry->setNattedPort(UDpMsg->getSrcPort());
+				entry->setNattedAddress(dgram->getDestAddress());
+				UDPInitChunk* initChunk=check_and_cast<UDPInitChunk*>(chunk);
+				entry->setGlobalVTag(initChunk->getInitTag());
+				natTable->natEntries.push_back(entry);
+				UDpEV3<<"added entry for local deliver\n";
+				natTable->printNatTable();
+				return INetfilter::IHook::DROP;
+			}
+			else
+			{
+				UDPNatEntry *entry2 = new UDPNatEntry();
+				entry2->setLocalAddress(dgram->getSrcAddress());
+				entry2->setLocalPort(UDpMsg->getSrcPort());
+				entry2->setGlobalAddress(entry->getGlobalAddress());
+				entry2->setGlobalPort(UDpMsg->getDestPort());
+				entry2->setNattedPort(UDpMsg->getSrcPort());
+				entry2->setNattedAddress(entry->getGlobalAddress());
+				UDPInitChunk* initChunk=check_and_cast<UDPInitChunk*>(chunk);
+				entry2->setGlobalVTag(initChunk->getInitTag());
+				natTable->natEntries.push_back(entry2);
+				dgram->setDestAddress(entry->getLocalAddress().toIPv4());
+				UDpMsg->setDestPort(entry->getLocalPort());
+				dgram->setSrcAddress(entry->getGlobalAddress().toIPv4());
+				UDpMsg->setSrcPort(entry->getGlobalPort());
+				UDpEV3<<"added additional entry for local deliver\n";
+				natTable->printNatTable();
+				UDpEV3<<"destAddress set to "<<dgram->getDestAddress()<<", destPort set to "<<UDpMsg->getDestPort()<<"\n";
+			}
+		}
+		else
+		{
+			UDpEV3<<"no INIT: destAddr="<<dgram->getDestAddress()<<" destPort="<<UDpMsg->getDestPort()<<" srcPort="<<UDpMsg->getSrcPort()<<" vTag="<<UDpMsg->getTag()<<"\n";
+			entry = natTable->getLocalEntry(dgram->getDestAddress(), UDpMsg->getSrcPort(), UDpMsg->getDestPort(), UDpMsg->getTag());
+			if (entry!=NULL)
+			{
+				dgram->setDestAddress(entry->getLocalAddress().toIPv4());
+				UDpMsg->setDestPort(entry->getLocalPort());
+				dgram->setSrcAddress(entry->getGlobalAddress().toIPv4());
+				UDpMsg->setSrcPort(entry->getGlobalPort());
+			}
+			else
+			{
+				UDpEV3<<"no entry found\n";
+				return INetfilter::IHook::DROP;
+			}
+		}
+	}
+	nattedPackets++;
+	return INetfilter::IHook::ACCEPT;
+}
+
+INetfilter::IHook::Result UDPNatHook::datagramPostRoutingHook(INetworkDatagram* datagram, const InterfaceEntry* inIE, const InterfaceEntry*& outIE, Address& nextHopAddr)
+{
+    return INetfilter::IHook::ACCEPT;
+}
+
+INetfilter::IHook::Result UDPNatHook::datagramLocalInHook(INetworkDatagram* datagram, const InterfaceEntry* inIE)
+{
+    return INetfilter::IHook::ACCEPT;
+}
+
+INetfilter::IHook::Result UDPNatHook::datagramLocalOutHook(INetworkDatagram* datagram, const InterfaceEntry*& outIE, Address& nextHopAddr)
+{
+    return INetfilter::IHook::ACCEPT;
+}
+
+
+void UDPNatHook::sendBackError(IPv4Datagram* dgram)
+{
+	UDPMessage *UDpmsg = new UDPMessage();
+	UDpmsg->setByteLength(UDP_COMMON_HEADER);
+	UDPErrorChunk* errorChunk = new UDPErrorChunk("NatError");
+	errorChunk->setChunkType(ERRORTYPE);
+	errorChunk->setByteLength(4);
+	UDPSimpleErrorCauseParameter* cause = new UDPSimpleErrorCauseParameter("Cause");
+	cause->setParameterType(MISSING_NAT_ENTRY);
+	cause->setByteLength(4);
+	cause->encapsulate(dgram->dup());
+	errorChunk->setMBit(true);
+	errorChunk->setTBit(true);
+	errorChunk->addParameters(cause);
+	UDpmsg->addChunk(errorChunk);
+
+	UDPMessage *oldmsg = check_and_cast<UDPMessage*>(dgram->decapsulate());
+	UDpmsg->setSrcPort(oldmsg->getDestPort());
+	UDpmsg->setDestPort(oldmsg->getSrcPort());
+	UDpmsg->setTag(oldmsg->getTag());
+	UDpmsg->setChecksumOk(true);
+	dgram->removeControlInfo();
+	dgram->setName(UDpmsg->getName());
+	dgram->setByteLength(IP_HEADER_BYTES);
+	dgram->encapsulate(UDpmsg);
+	IPv4Address tmpaddr = dgram->getDestAddress();
+	dgram->setDestAddress(dgram->getSrcAddress());
+	if (!tmpaddr.isUnspecified())
+	    dgram->setSrcAddress(tmpaddr);
+	dgram->setTransportProtocol(IP_PROT_UDP);
+	delete oldmsg;
+}
+
+void UDPNatHook::finish()
+{
+    if (ipLayer)
+        ipLayer->unregisterHook(0, this);
+    ipLayer = NULL;
+    delete natTable;
+    std::cout<<getFullPath()<<": Natted packets: "<<nattedPackets<<"\n";
+}
